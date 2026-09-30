@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gestion des voitures</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 30px auto; padding: 0 16px; }
+    h1 { border-bottom: 3px solid #f0c030; padding-bottom: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+    th { background: #eee; }
+    form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
+    input { padding: 6px; }
+    button { padding: 6px 10px; cursor: pointer; }
+    #message { margin-top: 12px; font-weight: bold; }
+    .error { color: #c00; }
+    .ok { color: #080; }
+  </style>
+</head>
+<body>
+  <h1>Gestion des voitures</h1>
+
+  <h2 id="form-title">Ajouter une voiture</h2>
+  <form id="product-form">
+    <input type="hidden" id="id">
+    <input id="nom" placeholder="Modèle (ex : BMW Série 5)" required>
+    <input id="categorie" placeholder="Catégorie (SUV, Berline...)" required>
+    <input id="description" placeholder="Description">
+    <input id="prix" type="number" step="0.01" min="0" placeholder="Prix (€)" required>
+    <button type="submit" id="submit-btn">Ajouter</button>
+    <button type="button" id="cancel-btn" hidden>Annuler</button>
+  </form>
+
+  <div id="message"></div>
+
+  <h2>Liste des voitures</h2>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Nom</th><th>Description</th><th>Prix</th><th>Catégorie</th><th>Actions</th></tr>
+    </thead>
+    <tbody id="products"></tbody>
+  </table>
+
+  <script>
+    const API = '/products';
+    const form = document.getElementById('product-form');
+    const fields = ['id', 'nom', 'description', 'prix', 'categorie'];
+    const $ = id => document.getElementById(id);
+
+    function showMessage(text, isError = false) {
+      $('message').textContent = text;
+      $('message').className = isError ? 'error' : 'ok';
+    }
+
+    async function request(method, url, body) {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined
+      });
+      const data = res.status === 204 ? null : await res.json();
+      if (!res.ok) throw new Error(`${res.status} - ${data.message}${data.errors ? ' : ' + data.errors.join(', ') : ''}`);
+      return { status: res.status, data };
+    }
+
+    // Lister
+    async function loadProducts() {
+      const { data } = await request('GET', API);
+      const tbody = $('products');
+      tbody.innerHTML = '';
+      data.forEach(p => {
+        const tr = document.createElement('tr');
+        [p.id, p.nom, p.description, p.prix.toFixed(2) + ' €', p.categorie].forEach(v => {
+          const td = document.createElement('td');
+          td.textContent = v;
+          tr.appendChild(td);
+        });
+        const actions = document.createElement('td');
+        actions.append(
+          button('Voir', () => viewProduct(p.id)),
+          button('Modifier', () => editProduct(p)),
+          button('Promo -10%', () => discount(p)),
+          button('Supprimer', () => deleteProduct(p.id))
+        );
+        tr.appendChild(actions);
+        tbody.appendChild(tr);
+      });
+    }
+
+    function button(label, onClick) {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.onclick = onClick;
+      return b;
+    }
+
+    // Consulter
+    async function viewProduct(id) {
+      try {
+        const { status, data } = await request('GET', `${API}/${id}`);
+        showMessage(`${status} - ${JSON.stringify(data)}`);
+      } catch (e) { showMessage(e.message, true); }
+    }
+
+    // Prépare le formulaire pour remplacer (PUT)
+    function editProduct(p) {
+      fields.forEach(f => $(f).value = p[f]);
+      $('form-title').textContent = `Remplacer le produit #${p.id}`;
+      $('submit-btn').textContent = 'Enregistrer';
+      $('cancel-btn').hidden = false;
+    }
+
+    function resetForm() {
+      form.reset();
+      $('id').value = '';
+      $('form-title').textContent = 'Ajouter une voiture';
+      $('submit-btn').textContent = 'Ajouter';
+      $('cancel-btn').hidden = true;
+    }
+
+    // Modifier partiellement (PATCH) : uniquement le prix
+    async function discount(p) {
+      try {
+        const prix = Math.round(p.prix * 0.9 * 100) / 100;
+        const { status } = await request('PATCH', `${API}/${p.id}`, { prix });
+        showMessage(`${status} - Prix de "${p.nom}" modifié`);
+        loadProducts();
+      } catch (e) { showMessage(e.message, true); }
+    }
+
+    // Supprimer
+    async function deleteProduct(id) {
+      if (!confirm('Supprimer ce produit ?')) return;
+      try {
+        const { status } = await request('DELETE', `${API}/${id}`);
+        showMessage(`${status} - Produit supprimé`);
+        loadProducts();
+      } catch (e) { showMessage(e.message, true); }
+    }
+
+    // Ajouter (POST) ou remplacer (PUT)
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      const product = {
+        nom: $('nom').value,
+        description: $('description').value,
+        prix: parseFloat($('prix').value),
+        categorie: $('categorie').value
+      };
+      const id = $('id').value;
+      try {
+        const { status } = id
+          ? await request('PUT', `${API}/${id}`, product)
+          : await request('POST', API, product);
+        showMessage(`${status} - Produit ${id ? 'remplacé' : 'ajouté'}`);
+        resetForm();
+        loadProducts();
+      } catch (err) { showMessage(err.message, true); }
+    });
+
+    $('cancel-btn').onclick = resetForm;
+
+    loadProducts();
+  </script>
+</body>
+</html>
