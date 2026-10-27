@@ -16,11 +16,26 @@
     #message { margin-top: 12px; font-weight: bold; }
     .error { color: #c00; }
     .ok { color: #080; }
+    [hidden] { display: none !important; }
+    #login-form { display: flex; gap: 8px; margin: 0; }
+    #auth { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px; background: #f5f5f5; border: 1px solid #ddd; }
   </style>
 </head>
 <body>
   <h1>Gestion des voitures</h1>
 
+  <!-- Exo 2 : bloc de connexion (récupère et utilise le jeton d'accès) -->
+  <div id="auth">
+    <form id="login-form">
+      <input id="username" placeholder="Utilisateur" value="admin" required>
+      <input id="password" type="password" placeholder="Mot de passe" required>
+      <button type="submit">Se connecter</button>
+    </form>
+    <span id="auth-status">Non connecté : lecture seule</span>
+    <button type="button" id="logout-btn" hidden>Se déconnecter</button>
+  </div>
+
+  <!-- Exo 1 : formulaire pour ajouter (POST) ou remplacer (PUT) -->
   <h2 id="form-title">Ajouter une voiture</h2>
   <form id="product-form">
     <input type="hidden" id="id">
@@ -34,6 +49,7 @@
 
   <div id="message"></div>
 
+  <!-- Exo 1 : liste des produits (GET) avec les actions par ligne -->
   <h2>Liste des voitures</h2>
   <table>
     <thead>
@@ -47,24 +63,33 @@
     const form = document.getElementById('product-form');
     const fields = ['id', 'nom', 'description', 'prix', 'categorie'];
     const $ = id => document.getElementById(id);
+    // Exo 2 : jeton d'accès gardé en mémoire
+    let token = null;
+    let tokenExpiresAt = 0;
+    let timer = null;
 
     function showMessage(text, isError = false) {
       $('message').textContent = text;
       $('message').className = isError ? 'error' : 'ok';
     }
 
+    // Envoie une requête JSON à l'API
+    // Exo 2 : ajoute le jeton dans l'en-tête Authorization s'il existe
     async function request(method, url, body) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
       const res = await fetch(url, {
         method,
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: body ? JSON.stringify(body) : undefined
       });
       const data = res.status === 204 ? null : await res.json();
+      if (res.status === 401 && token) logout();
       if (!res.ok) throw new Error(`${res.status} - ${data.message}${data.errors ? ' : ' + data.errors.join(', ') : ''}`);
       return { status: res.status, data };
     }
 
-    // Lister
+    // Exo 1 - Lister : GET /products
     async function loadProducts() {
       const { data } = await request('GET', API);
       const tbody = $('products');
@@ -95,7 +120,7 @@
       return b;
     }
 
-    // Consulter
+    // Exo 1 - Consulter : GET /products/:id
     async function viewProduct(id) {
       try {
         const { status, data } = await request('GET', `${API}/${id}`);
@@ -103,7 +128,7 @@
       } catch (e) { showMessage(e.message, true); }
     }
 
-    // Prépare le formulaire pour remplacer (PUT)
+    // Exo 1 - Remplacer : prépare le formulaire pour un PUT
     function editProduct(p) {
       fields.forEach(f => $(f).value = p[f]);
       $('form-title').textContent = `Remplacer le produit #${p.id}`;
@@ -119,7 +144,7 @@
       $('cancel-btn').hidden = true;
     }
 
-    // Modifier partiellement (PATCH) : uniquement le prix
+    // Exo 1 - Modifier : PATCH /products/:id (uniquement le prix)
     async function discount(p) {
       try {
         const prix = Math.round(p.prix * 0.9 * 100) / 100;
@@ -129,7 +154,7 @@
       } catch (e) { showMessage(e.message, true); }
     }
 
-    // Supprimer
+    // Exo 1 - Supprimer : DELETE /products/:id
     async function deleteProduct(id) {
       if (!confirm('Supprimer ce produit ?')) return;
       try {
@@ -139,7 +164,7 @@
       } catch (e) { showMessage(e.message, true); }
     }
 
-    // Ajouter (POST) ou remplacer (PUT)
+    // Exo 1 - Ajouter (POST /products) ou remplacer (PUT /products/:id)
     form.addEventListener('submit', async e => {
       e.preventDefault();
       const product = {
@@ -160,6 +185,49 @@
     });
 
     $('cancel-btn').onclick = resetForm;
+
+    // Exo 2 - Connexion : POST /auth/login, récupère le jeton d'accès
+    $('login-form').addEventListener('submit', async e => {
+      e.preventDefault();
+      try {
+        const { status, data } = await request('POST', '/auth/login', {
+          username: $('username').value,
+          password: $('password').value
+        });
+        token = data.token;
+        tokenExpiresAt = Date.now() + data.expiresIn * 1000;
+        $('password').value = '';
+        $('login-form').hidden = true;
+        $('logout-btn').hidden = false;
+        updateAuthStatus();
+        timer = setInterval(updateAuthStatus, 1000);
+        showMessage(`${status} - Connecté`);
+      } catch (err) { showMessage(err.message, true); }
+    });
+
+    // Exo 2 - Expiration : affiche le temps restant (5 min) et déconnecte à 0
+    function updateAuthStatus() {
+      const remaining = Math.max(0, Math.round((tokenExpiresAt - Date.now()) / 1000));
+      if (remaining === 0) {
+        logout();
+        showMessage('Jeton expiré, reconnecte-toi', true);
+        return;
+      }
+      const min = Math.floor(remaining / 60);
+      const sec = String(remaining % 60).padStart(2, '0');
+      $('auth-status').textContent = `Connecté en tant que ${$('username').value}, jeton valable encore ${min}:${sec}`;
+    }
+
+    // Exo 2 - Déconnexion : oublie le jeton, retour en lecture seule
+    function logout() {
+      token = null;
+      clearInterval(timer);
+      $('login-form').hidden = false;
+      $('logout-btn').hidden = true;
+      $('auth-status').textContent = 'Non connecté : lecture seule';
+    }
+
+    $('logout-btn').onclick = logout;
 
     loadProducts();
   </script>
